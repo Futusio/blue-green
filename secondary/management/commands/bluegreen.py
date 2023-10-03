@@ -1,12 +1,15 @@
 from django.core.management.base import BaseCommand, CommandError
-
+from django.apps import apps
 from django.core.management.commands.makemigrations import Command as MakeMigrationsCommand, MigrationWriter, Migration
 from django.core.management.base import BaseCommand, CommandError, no_translations
 from django.db.migrations.operations import (
-    CreateModel, DeleteModel, RemoveField, AddField, RenameField, RenameModel
-
+    CreateModel, DeleteModel, RemoveField, AddField, RenameField, RenameModel,
 )
 import os
+
+from ...fields import AddFieldPatched
+
+DESTRUCTION_MIGRATIONS = [RenameField]
 
 
 class PatchedMigrationWriter(MigrationWriter):
@@ -15,21 +18,33 @@ class PatchedMigrationWriter(MigrationWriter):
         super().__init__(*args, **kwargs)
 
     def create_operation(self):
-        ...
+        return AddFieldPatched()
 
-
-    @staticmethod
-    def blue_green(operation):
+    def blue_green(self, operation):
         if isinstance(operation, CreateModel):  # Clean
             return operation, None
-        elif isinstance(operation, DeleteModel): # Clean
+        elif isinstance(operation, DeleteModel):  # Clean
             return None, operation
-        elif isinstance(operation, RemoveField): # Clean
+        elif isinstance(operation, RemoveField):  # Clean
             return None, operation
-        elif isinstance(operation, AddField): # Clean
+        elif isinstance(operation, AddField):  # Clean
             return operation, None
-        elif isinstance(operation, RenameField):  # TODO
-            return
+        elif isinstance(operation, RenameField):
+            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+            field = list(filter(lambda x: x.name == operation.new_name, model._meta.fields))[0]
+            # return operation, None
+            add_operation = AddFieldPatched(
+                model_name=model.__name__.lower(),
+                name=operation.new_name,
+                old_name=operation.old_name,
+                field=field.clone(),
+                preserve_default=True
+            )
+            drop_operation = RemoveField(
+                model_name=model.__name__.lower(),
+                name=operation.old_name,
+            )
+            return add_operation, drop_operation
 
     def create_blue(self, lst: list) -> Migration:
         operations = list(filter(None, lst))
@@ -56,6 +71,9 @@ class PatchedMigrationWriter(MigrationWriter):
     def split_migrations(self):
         blue_list, green_list = list(), list()
         for operation in self.migration.operations:
+            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+            x = 1
+            # field = model._meta.get_field(operation.)
             blue, green = self.blue_green(operation)
             blue_list.append(blue)
             green_list.append(green)
@@ -73,7 +91,7 @@ class Command(MakeMigrationsCommand):
         Type of Operation:
         
         Safe: 
-        - Create Table
+        - CREATE TABLE
         - ALTER table ADD COLUMN
         - 
         
@@ -94,8 +112,9 @@ class Command(MakeMigrationsCommand):
             if self.verbosity >= 1:
                 self.log(self.style.MIGRATE_HEADING("Migrations for '%s':" % app_label))
             for i, migration in enumerate(app_migrations):
-                # Describe the migration
+
                 writer = PatchedMigrationWriter(migration, self.include_header)
+
                 for writer in writer.split_migrations():
                     if self.verbosity >= 1:
                         # Display a relative path if it's below the current working

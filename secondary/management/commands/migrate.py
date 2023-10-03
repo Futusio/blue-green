@@ -5,12 +5,15 @@ from django.apps import apps
 from django.core.management.base import CommandError, no_translations
 from django.core.management.commands.migrate import Command
 from django.core.management.sql import emit_post_migrate_signal, emit_pre_migrate_signal
-from django.db import connections
+from django.db import connections, connection
 from django.db.migrations.autodetector import MigrationAutodetector
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import AmbiguityError
 from django.db.migrations.state import ModelState, ProjectState
 from django.utils.module_loading import module_has_submodule
+
+
+
 
 
 class Command(Command):
@@ -296,6 +299,7 @@ class Command(Command):
         else:
             fake = options["fake"]
             fake_initial = options["fake_initial"]
+        # Note: Here we apply migration
         post_migrate_state = executor.migrate(
             targets,
             plan=plan,
@@ -303,6 +307,19 @@ class Command(Command):
             fake=fake,
             fake_initial=fake_initial,
         )
+        from itertools import chain
+        operations = []
+        for migration, _ in plan:
+            operations.extend(migration.operations)
+
+        if set([x.__class__.__name__ for x in operations]) & {'AddFieldPatched'}:
+            for migration, _ in plan:
+                for operation in migration.operations:
+                    if operation.__class__.__name__ == 'AddFieldPatched':
+                        table_name = migration.app_label + '_' + operation.model_name
+                        with connection.cursor() as cursor:
+                            cursor.execute(f"UPDATE {table_name} SET {operation.name} = {operation.old_name};")
+
         # post_migrate signals have access to all models. Ensure that all models
         # are reloaded in case any are delayed.
         post_migrate_state.clear_delayed_apps_cache()
