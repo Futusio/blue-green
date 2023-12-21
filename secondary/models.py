@@ -11,11 +11,14 @@ class Upgrade(models.Model):
     # copy_field = models.IntegerField(default=0)
 
     class Meta:
-        db_table = "upgrade"
         indexes = [
             models.Index(fields=["profile_code"]),
         ]
 
 
-class SubtitleModel(models.Model):
+class SubtitleNCorModel(models.Model):
+    title = models.CharField(max_length=12)
+
+
+class WoWModel(models.Model):
     title = models.CharField(max_length=12)

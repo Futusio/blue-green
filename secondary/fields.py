@@ -1,6 +1,7 @@
 from django.db.migrations.operations import (
     CreateModel, DeleteModel, RemoveField, AddField, RenameField, RenameModel, AddIndex
 )
+from django.db.models.fields import BigAutoField
 
 
 class AddFieldPatched(AddField):
@@ -24,7 +25,9 @@ class AddFieldPatched(AddField):
 class CreateModelPatched(CreateModel):
     def __init__(self, name, fields, old_name, options=None, bases=None, managers=None):
         self.old_name = old_name
-        super().__init__(name, fields, options=options, bases=bases, managers=managers)
+        # field = self.migration.operations[0].fields[0][1].get_internal_type()
+        new_fields = tuple([(x.name, x) for x in fields])
+        super().__init__(name, new_fields, options=options, bases=bases, managers=managers)
 
 
 class AddIndexPatched(AddIndex):

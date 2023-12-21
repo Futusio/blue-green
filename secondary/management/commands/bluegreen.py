@@ -1,46 +1,48 @@
-from django.core.management.base import BaseCommand, CommandError
+import os
+
 from django.apps import apps
 from django.core.management.commands.makemigrations import Command as MakeMigrationsCommand, MigrationWriter, Migration
-from django.core.management.base import BaseCommand, CommandError, no_translations
-from django.db.models import Index
 from django.db.migrations.operations import (
     CreateModel,  # 🗹️
     DeleteModel,  # 🗹
-    AlterModelTable,
-    AlterModelTableComment,
-    AlterUniqueTogether,
     RenameModel,  # 🗹
-    AlterIndexTogether,
-    AlterModelOptions,
     AddIndex,  # 🗹
     RemoveIndex,  # 🗹
     RenameIndex,  # 🗹
     AddField,  # 🗹
     RemoveField,  # 🗹
-    AlterField,  # NoWay
     RenameField,  # 🗹
     AddConstraint,  # 🗹
     RemoveConstraint,  # 🗹
-    SeparateDatabaseAndState,
-    RunSQL,
-    RunPython,
+    # IMPOSSIBLE BLOCK
+    AlterModelTable,
+    AlterModelTableComment,
+    AlterUniqueTogether,
+    AlterIndexTogether,
+    AlterModelOptions,
+    AlterField,
     AlterOrderWithRespectTo,
     AlterModelManagers,
 )
-import os
 
 from ...fields import AddFieldPatched, CreateModelPatched, AddIndexPatched
 
-DESTRUCTION_MIGRATIONS = [RenameField]
+
+IMPOSSIBLE_OPERATIONS = {
+    AlterModelTable, AlterModelTableComment, AlterUniqueTogether, AlterIndexTogether, AlterModelOptions, AlterField,
+    AlterOrderWithRespectTo, AlterModelManagers
+}
 
 
 class PatchedMigrationWriter(MigrationWriter):
 
+    """
+    # Notes:
+    - If we rename model it's creating a new indexes
+
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-    def create_operation(self):
-        return AddFieldPatched()
 
     def blue_green(self, operation):
         # Model Block
@@ -48,11 +50,15 @@ class PatchedMigrationWriter(MigrationWriter):
             return operation, None
         elif isinstance(operation, DeleteModel):  # Clean
             return None, operation
-        elif isinstance(operation, RenameModel):
-            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+        elif isinstance(operation, RenameModel):  # Clean
+            model = apps.get_app_config(self.migration.app_label).get_model(operation.new_name)
             add_operation = CreateModelPatched(
-
+                name=model.__name__,
+                fields=model._meta.fields,
+                old_name="Abrakadabra"
             )
+            drop_operation = DeleteModel(name=operation.old_name)
+            return add_operation, drop_operation
         # Field Block
         elif isinstance(operation, RemoveField):  # Clean
             return None, operation
@@ -61,7 +67,6 @@ class PatchedMigrationWriter(MigrationWriter):
         elif isinstance(operation, RenameField):
             model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
             field = list(filter(lambda x: x.name == operation.new_name, model._meta.fields))[0]
-            # return operation, None
             add_operation = AddFieldPatched(
                 model_name=model.__name__.lower(),
                 name=operation.new_name,
@@ -120,10 +125,12 @@ class PatchedMigrationWriter(MigrationWriter):
         migration.initial = self.migration.initial
         return migration
 
-    def split_migrations(self):
+    def split_migrations(self, impossible=False):
+        if impossible:
+            return self.migration
         blue_list, green_list = list(), list()
         for operation in self.migration.operations:
-            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+            # model = apps.get_app_config(self.migration.app_label).get_model(operation.)
             # field = model._meta.get_field(operation.)
             blue, green = self.blue_green(operation)
             blue_list.append(blue)
@@ -146,10 +153,9 @@ class Command(MakeMigrationsCommand):
             if self.verbosity >= 1:
                 self.log(self.style.MIGRATE_HEADING("Migrations for '%s':" % app_label))
             for i, migration in enumerate(app_migrations):
-
                 writer = PatchedMigrationWriter(migration, self.include_header)
-
-                for writer in writer.split_migrations():
+                impossible = True if IMPOSSIBLE_OPERATIONS.intersection(migration.operations) else False
+                for writer in writer.split_migrations(impossible):
                     if self.verbosity >= 1:
                         # Display a relative path if it's below the current working
                         # directory, or an absolute path otherwise.
