@@ -13,9 +13,6 @@ from django.db.migrations.state import ModelState, ProjectState
 from django.utils.module_loading import module_has_submodule
 
 
-
-
-
 class Command(Command):
 
     def __init__(self, *args, **kwargs):

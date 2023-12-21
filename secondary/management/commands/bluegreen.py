@@ -2,12 +2,34 @@ from django.core.management.base import BaseCommand, CommandError
 from django.apps import apps
 from django.core.management.commands.makemigrations import Command as MakeMigrationsCommand, MigrationWriter, Migration
 from django.core.management.base import BaseCommand, CommandError, no_translations
+from django.db.models import Index
 from django.db.migrations.operations import (
-    CreateModel, DeleteModel, RemoveField, AddField, RenameField, RenameModel,
+    CreateModel,  # 🗹️
+    DeleteModel,  # 🗹
+    AlterModelTable,
+    AlterModelTableComment,
+    AlterUniqueTogether,
+    RenameModel,  # 🗹
+    AlterIndexTogether,
+    AlterModelOptions,
+    AddIndex,  # 🗹
+    RemoveIndex,  # 🗹
+    RenameIndex,  # 🗹
+    AddField,  # 🗹
+    RemoveField,  # 🗹
+    AlterField,  # NoWay
+    RenameField,  # 🗹
+    AddConstraint,  # 🗹
+    RemoveConstraint,  # 🗹
+    SeparateDatabaseAndState,
+    RunSQL,
+    RunPython,
+    AlterOrderWithRespectTo,
+    AlterModelManagers,
 )
 import os
 
-from ...fields import AddFieldPatched
+from ...fields import AddFieldPatched, CreateModelPatched, AddIndexPatched
 
 DESTRUCTION_MIGRATIONS = [RenameField]
 
@@ -21,10 +43,17 @@ class PatchedMigrationWriter(MigrationWriter):
         return AddFieldPatched()
 
     def blue_green(self, operation):
+        # Model Block
         if isinstance(operation, CreateModel):  # Clean
             return operation, None
         elif isinstance(operation, DeleteModel):  # Clean
             return None, operation
+        elif isinstance(operation, RenameModel):
+            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+            add_operation = CreateModelPatched(
+
+            )
+        # Field Block
         elif isinstance(operation, RemoveField):  # Clean
             return None, operation
         elif isinstance(operation, AddField):  # Clean
@@ -45,6 +74,29 @@ class PatchedMigrationWriter(MigrationWriter):
                 name=operation.old_name,
             )
             return add_operation, drop_operation
+        # Index Block
+        elif isinstance(operation, AddIndex):  # Clean
+            return operation, None
+        elif isinstance(operation, RemoveIndex):  # Clean
+            return None, operation
+        elif isinstance(operation, RenameIndex):
+            model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
+            index = list(filter(lambda x: x.name == operation.new_name, model._meta.indexes))[0]
+            add_operation = AddIndexPatched(
+                model_name=model.__name__.lower(),
+                index=index,
+                old_name=operation.old_name
+            )
+            drop_operation = RemoveIndex(
+                model_name=model.__name__.lower(),
+                name=operation.old_name,
+            )
+            return add_operation, drop_operation
+        # Constraint Block
+        elif isinstance(operation, AddConstraint):  # Clean
+            return operation, None
+        elif isinstance(RemoveConstraint):
+            return None, operation
 
     def create_blue(self, lst: list) -> Migration:
         operations = list(filter(None, lst))
@@ -72,7 +124,6 @@ class PatchedMigrationWriter(MigrationWriter):
         blue_list, green_list = list(), list()
         for operation in self.migration.operations:
             model = apps.get_app_config(self.migration.app_label).get_model(operation.model_name)
-            x = 1
             # field = model._meta.get_field(operation.)
             blue, green = self.blue_green(operation)
             blue_list.append(blue)
@@ -85,23 +136,6 @@ class PatchedMigrationWriter(MigrationWriter):
 
 class Command(MakeMigrationsCommand):
     help = "Closes the specified poll for voting"
-
-    TODO = \
-    """
-        Type of Operation:
-        
-        Safe: 
-        - CREATE TABLE
-        - ALTER table ADD COLUMN
-        - 
-        
-        Unsafe:
-        - DROP table ...
-        - ALTER table ALTER/DELETE COLUMN ...
-        - ALTER table ALTER NAE ...
-    """
-
-
 
     def write_migration_files(self, changes, update_previous_migration_paths=None):
         """
